@@ -1,5 +1,5 @@
 #include <emp-tool/emp-tool.h>
-#include "emp-ag2pc/emp-ag2pc.h"
+#include "password-ag2pc/password-ag2pc.h"
 using namespace std;
 using namespace emp;
 
@@ -29,12 +29,24 @@ void test(int party, NetIO* io, string name, string check_output = "") {
 	t1 = clock_start();
 	twopc.online(in, out);
 	cout << "online:\t"<<party<<"\t"<<time_from(t1)<<endl;
-	if(party == BOB and check_output.size() > 0){
+	if(party == ALICE and check_output.size() > 0){
+		printf("ALICE:\n");
 		string res = "";
 		for(int i = 0; i < cf.n3; ++i)
 			res += (out[i]?"1":"0");
+		cout << "res: " << res << endl;
+		cout << "che: " << hex_to_binary(check_output) << endl;
 		cout << (res == hex_to_binary(check_output)? "GOOD!":"BAD!")<<endl;
 	}
+	/*if(party == BOB){
+		printf("BOB:\n");
+		string res = "";
+		for(int i = 0; i < cf.n3; ++i)
+			res += (out[i]?"1":"0");
+		cout << "res: " << res << endl;
+		cout << "che: " << hex_to_binary(check_output) << endl;
+		cout << (res == hex_to_binary(check_output)? "GOOD!":"BAD!")<<endl;
+	}*/
 	delete[] in;
 	delete[] out;
 }

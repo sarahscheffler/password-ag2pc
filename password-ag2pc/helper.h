@@ -99,5 +99,15 @@ void recv_partial_block(NetIO * io, block * data, int length) {
 		io->recv_data(&(data[i]), B);
 	}
 }
+
+//ADDED:
+void print_block(const block& bl) {
+	uint8_t val[16];
+	memcpy(val, &bl, sizeof(val));
+	printf("%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n", 
+			val[0], val[1], val[2], val[3], val[4], val[5], val[6],
+			val[7], val[8], val[9], val[10], val[11], val[12],
+			val[13], val[14], val[15]);
+}
 }
 #endif// __HELPER

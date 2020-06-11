@@ -4,7 +4,7 @@
 #include <emp-ot/emp-ot.h>
 #include <thread>
 #include "feq.h"
-#include "emp-ag2pc/helper.h"
+#include "password-ag2pc/helper.h"
 #include "c2pc_config.h"
 
 namespace emp {
