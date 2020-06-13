@@ -641,10 +641,18 @@ class C2PC { public:
 		memset(ad+4, x_in, 1);
 		memset(ad+5, zmsk, 1);
 		memset(ad+6, s, 1);
+
+		// Get password.  In real execution, would want to read password from stdin.
+		// But here we just read from a file for simplicity.
 		//cout << "Enter password: ";
-		char pw[MAXPWLEN] = "verysecurepassword";
-		//std::fill(pw, pw+MAXPWLEN, 0);
+		char pw[MAXPWLEN];
+		std::fill(pw, pw+MAXPWLEN, 0);
+		std::ifstream pwfile;
+		pwfile.open("ALICE_password.txt");
+		pwfile >> pw;
+		pwfile.close();
 		//cin.getline(pw, MAXPWLEN);
+
 		raw_pbkdf(out, (uint8_t*) &_salt, (uint8_t*) pw, ad, 
 				outlen, sizeof(block), MAXPWLEN, 7);
 		memset(pw, 0, MAXPWLEN);
