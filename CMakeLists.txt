@@ -11,8 +11,11 @@ include(${CMAKE_FOLDER}/cmake/threading.cmake)
 FIND_PACKAGE(emp-ot REQUIRED)
 INCLUDE_DIRECTORIES(${EMP-OT_INCLUDE_DIRS})
 
+link_libraries(libargon2.a)
+
 install(DIRECTORY password-ag2pc DESTINATION include)
 install(DIRECTORY cmake/ DESTINATION cmake)
+
 
 # Test cases
 macro (add_test _name)

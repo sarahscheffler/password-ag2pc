@@ -2,6 +2,7 @@
 #define C2PC_H__
 #include "fpre.h"
 #include <emp-tool/emp-tool.h>
+#include "argon2.h"
 using std::flush;
 using std::cout;
 using std::cin;
@@ -327,6 +328,7 @@ class C2PC { public:
 				pc += 1;
 				int perm_bit = (int) ((perm_tmp[pc/8] >> (pc%8))%2 == 1);
 				int j = i - cf->n1;
+				//printf("Computing self-garbled input tables from PBKDF\n");
 				bool pwmask0 = pbkdf_input(selfGTinputBlocks[j][perm_bit], i, 0);
 				bool pwmask1 = pbkdf_input(selfGTinputBlocks[j][1 - perm_bit], i, 1);
 				selfGTinputBits[j][perm_bit] = logic_xor(mask[i], 
@@ -357,6 +359,7 @@ class C2PC { public:
 		if (party==ALICE) {
 			for (int i=0; i < cf->n3; ++i) {
 				bool r = value[cf->num_wire - cf->n3 + i];
+				//printf("Computing self-garbled output tables from PBKDF\n");
 				// zmsk = 0, s=0 => z = r
 				selfGToutput[i][0] = logic_xor(r,
 						pbkdf_output(cf->num_wire-cf->n3+i, 0, 0));
@@ -391,9 +394,10 @@ class C2PC { public:
 				//mask_input[i] = logic_xor(input[i - cf->n1], value[i]);
 				//mask_input[i] = logic_xor(mask_input[i], mask[i]);
 
-				// re-get from self-garbled input tables
+				// re-get masked input from self-garbled input tables
 				int j = i - cf->n1;
 				block tmp;
+				//printf("Reconstructing input from PBKDF\n");
 				bool maskbit = pbkdf_input(tmp, i, input[j]);
 				if (block_cmp(&tmp, &(selfGTinputBlocks[j][0]), 1))
 					mask_input[i] = (uint8_t) logic_xor(maskbit, selfGTinputBits[j][0]);
@@ -499,6 +503,7 @@ class C2PC { public:
 				uint8_t s = o[i];
 				uint8_t out_index = s + 2*zmsk;
 				bool output_from_table = selfGToutput[i][out_index];
+				//printf("Reconstructing output from PBKDF\n");
 				output[i] = logic_xor(output_from_table,
 						pbkdf_output(cf->num_wire-cf->n3+i, zmsk, s));
 			}
@@ -609,6 +614,8 @@ class C2PC { public:
 
 	bool pbkdf_output(int idx, bool zmsk, bool s) {
 		uint8_t tmp;
+		//printf("pbkdf_output call: %d, %d, %d, %d, %d\n", 
+				//idx, 0xff, zmsk, s, 1);
 		pbkdf(&tmp, idx, 0xff, (uint8_t) zmsk, (uint8_t) s, 1);
 		return ((tmp % 2) == 1);
 	}
@@ -617,39 +624,59 @@ class C2PC { public:
 		// outputs N+1 bits: N=blocklen stored in out, 1 given as output
 		const int outlen = sizeof(block) + 1;
 		uint8_t tmp[outlen];
+		//printf("pbkdf_input call: %d, %d, %d, %d, %d\n", idx, x_in, 
+				//0xff, 0xff, outlen);
 		pbkdf(tmp, idx, (uint8_t) x_in, 0xff, 0xff, outlen);
 		memcpy(&out, tmp, sizeof(block));
 		return ((tmp[outlen-1] % 2) == 1);
 	}
 
-	void pbkdf(uint8_t* out, int idx, uint8_t x_in, uint8_t zmsk, uint8_t s, uint64_t outlen) {
+	void pbkdf(uint8_t* out, int idx, uint8_t x_in, uint8_t zmsk, uint8_t s, uint32_t outlen) {
 		// abstraction of password entry process, cannot be compelled during this function
 		// input to PBKDF: 
 		// index (4B) || x_in (1B) || zmsk (1B) || s (1B) || password (32B) 
 		// (plus salt as part of actual pbkdf function)
-		uint8_t in[39];
-		memcpy(in, &idx, 4);
-		memset(in+4, x_in, 1);
-		memset(in+5, zmsk, 1);
-		memset(in+6, s, 1);
+		uint8_t ad[7];
+		memcpy(ad, &idx, 4);
+		memset(ad+4, x_in, 1);
+		memset(ad+5, zmsk, 1);
+		memset(ad+6, s, 1);
 		//cout << "Enter password: ";
 		char pw[MAXPWLEN] = "verysecurepassword";
 		//std::fill(pw, pw+MAXPWLEN, 0);
 		//cin.getline(pw, MAXPWLEN);
-		memcpy(in+7, pw, MAXPWLEN);
-		raw_pbkdf(out, _salt, in, outlen, 39);
-		memset(in, 0, 39);
+		raw_pbkdf(out, (uint8_t*) &_salt, (uint8_t*) pw, ad, 
+				outlen, sizeof(block), MAXPWLEN, 7);
 		memset(pw, 0, MAXPWLEN);
 	}
-	void raw_pbkdf(uint8_t* out, const block& salt, const uint8_t* in, uint64_t outlen, uint64_t inlen) {
-		//TEMP
-		if (outlen <= 4) {
-			memset(out, 0xff, outlen);
-		} else {
-			memcpy(out, in, 4);
-			memset(out+4, 0xff, outlen-4);
-			if (inlen >= 4) memset(out+4, in[4], 1);
+
+	void raw_pbkdf(uint8_t* out, uint8_t* salt, uint8_t* pw, uint8_t* ad,
+			uint32_t outlen, uint32_t saltlen, uint32_t pwlen, uint32_t adlen) {
+
+		// argon2 parameters cranked down to be pretty weak due to speed
+		//const uint32_t T_COST = 5; // num passes
+		//const uint32_t M_COST = 1 << 20; // 1GB
+		//const uint32_t PAR = 4; // number of threads and compute lanes
+		const uint32_t T_COST = 1;
+		const uint32_t M_COST = 1 << 10;
+		const uint32_t PAR = 4;
+
+		// account for min 
+		uint32_t tmpoutlen = outlen;
+		if (outlen < ARGON2_MIN_OUTLEN) {
+			tmpoutlen = ARGON2_MIN_OUTLEN;
 		}
+		uint8_t tmpout[tmpoutlen];
+		argon2_context ctx = {tmpout, tmpoutlen, pw, pwlen,
+				salt, saltlen, NULL, 0, ad, adlen,
+				T_COST, M_COST, PAR, PAR, ARGON2_VERSION_13, 
+				NULL, NULL, ARGON2_FLAG_CLEAR_PASSWORD};
+		int rc = argon2i_ctx(&ctx);
+		if (rc != ARGON2_OK) 
+			printf("Argon2 error: %s\n", argon2_error_message(rc));
+		memcpy(out, tmpout, outlen);
+		memset(tmpout, 0, tmpoutlen);
+		memset(pw, 0, pwlen);
 	}
 };
 }
