@@ -40,6 +40,7 @@ class C2PC { public:
 	block (*selfGTinputBlocks)[2] = nullptr;
 	bool (*selfGTinputBits)[2] = nullptr;
 	bool (*selfGToutput)[4] = nullptr;
+	uint8_t* mask_input_input = nullptr;
 	//end added
 
 	C2PC(NetIO * io, int party, CircuitFile * cf) {
@@ -70,6 +71,8 @@ class C2PC { public:
 		labels = new block[cf->num_wire];
 
 		mask = new bool[cf->n1 + cf->n2];
+
+		mask_input_input = new uint8_t[cf->n1 + cf->n2];
 
 		if (party == ALICE) {
 			selfGTinputBlocks = new block[cf->n2][2];
@@ -301,12 +304,10 @@ class C2PC { public:
 		delete[] y1;
 		delete[] y2;
 
+
 		block tmp;
 		if(party == ALICE) {
 			send_partial_block<SSP>(io, mac, cf->n1);
-			block perm_bits;
-			int pc = 0; // perm_counter
-			uint8_t perm_tmp[sizeof(block)];
 			for(int i = cf->n1; i < cf->n1+cf->n2; ++i) {
 				recv_partial_block<SSP>(io, &tmp, 1);
 				block ttt = xorBlocks(key[i], fpre->Delta);
@@ -318,7 +319,31 @@ class C2PC { public:
 				else if(block_cmp(&tmp, &ttt, 1))
 					mask[i] = true;
 				else cout <<"no match! ALICE\t"<<i<<endl;
+			}
+		} else {
+			for(int i = 0; i < cf->n1; ++i) {
+				recv_partial_block<SSP>(io, &tmp, 1);
+				block ttt = xorBlocks(key[i], fpre->Delta);
+				ttt =  _mm_and_si128(ttt, MASK);
+				tmp =  _mm_and_si128(tmp, MASK);
+				block mask_key = _mm_and_si128(key[i], MASK);
+				if(block_cmp(&tmp, &mask_key, 1)) {
+					mask[i] = false;
+				} else if(block_cmp(&tmp, &ttt, 1)) {
+					mask[i] = true;
+				}
+				else cout <<"no match! BOB\t"<<i<<endl;
+			}
+			send_partial_block<SSP>(io, mac+cf->n1, cf->n2);
+		}
+	}
 
+	void selfgarble_io() {
+		if(party == ALICE) {
+			block perm_bits;
+			int pc = 0; // perm_counter
+			uint8_t perm_tmp[sizeof(block)];
+			for(int i = cf->n1; i < cf->n1+cf->n2; ++i) {
 				//ALICE: self-garbled input tables
 				if (pc % (sizeof(block)*8) == 0) {
 					prg.random_block(&perm_bits, 1);
@@ -337,26 +362,8 @@ class C2PC { public:
 						logic_xor(pwmask1,
 						logic_xor(mask[i], 1)));
 			}
-		} else {
-			for(int i = 0; i < cf->n1; ++i) {
-				recv_partial_block<SSP>(io, &tmp, 1);
-				block ttt = xorBlocks(key[i], fpre->Delta);
-				ttt =  _mm_and_si128(ttt, MASK);
-				tmp =  _mm_and_si128(tmp, MASK);
-				block mask_key = _mm_and_si128(key[i], MASK);
-				if(block_cmp(&tmp, &mask_key, 1)) {
-					mask[i] = false;
-				} else if(block_cmp(&tmp, &ttt, 1)) {
-					mask[i] = true;
-				}
-				else cout <<"no match! BOB\t"<<i<<endl;
-			}
 
-			send_partial_block<SSP>(io, mac+cf->n1, cf->n2);
-		}
-
-		// ALICE: self-garbled output tables
-		if (party==ALICE) {
+			// ALICE: self-garbled output tables
 			for (int i=0; i < cf->n3; ++i) {
 				bool r = value[cf->num_wire - cf->n3 + i];
 				//printf("Computing self-garbled output tables from PBKDF\n");
@@ -384,15 +391,12 @@ class C2PC { public:
 
 	}
 
-	void online (bool * input, bool * output) {
-		uint8_t * mask_input = new uint8_t[cf->num_wire];
-		memset(mask_input, 0, cf->num_wire);
+	void handle_input (bool * input) {
+		memset(mask_input_input, 0, cf->n1 + cf->n2);
 		block tmp;
 
 		if(party == ALICE) {
 			for(int i = cf->n1; i < cf->n1+cf->n2; ++i) {
-				//mask_input[i] = logic_xor(input[i - cf->n1], value[i]);
-				//mask_input[i] = logic_xor(mask_input[i], mask[i]);
 
 				// re-get masked input from self-garbled input tables
 				int j = i - cf->n1;
@@ -400,31 +404,39 @@ class C2PC { public:
 				//printf("Reconstructing input from PBKDF\n");
 				bool maskbit = pbkdf_input(tmp, i, input[j]);
 				if (block_cmp(&tmp, &(selfGTinputBlocks[j][0]), 1))
-					mask_input[i] = (uint8_t) logic_xor(maskbit, selfGTinputBits[j][0]);
+					mask_input_input[i] = (uint8_t) logic_xor(maskbit, selfGTinputBits[j][0]);
 				else if (block_cmp(&tmp, &(selfGTinputBlocks[j][1]), 1))
-					mask_input[i] = (uint8_t) logic_xor(maskbit, selfGTinputBits[j][1]);
+					mask_input_input[i] = (uint8_t) logic_xor(maskbit, selfGTinputBits[j][1]);
 				else
 					cout << "Re-entered PBKDF did not find masked input" << endl;
 			}
-			io->recv_data(mask_input, cf->n1);
-			io->send_data(mask_input+cf->n1, cf->n2);
+			io->recv_data(mask_input_input, cf->n1);
+			io->send_data(mask_input_input+cf->n1, cf->n2);
 			for(int i = 0; i < cf->n1 + cf->n2; ++i) {
 				tmp = labels[i];
-				if(mask_input[i]) tmp = xorBlocks(tmp, fpre->Delta);
+				if(mask_input_input[i]) tmp = xorBlocks(tmp, fpre->Delta);
 				io->send_block(&tmp, 1);
 			}
 		} else {
 			for(int i = 0; i < cf->n1; ++i) {
-				mask_input[i] = logic_xor(input[i], value[i]);
-				mask_input[i] = logic_xor(mask_input[i], mask[i]);
+				mask_input_input[i] = logic_xor(input[i], value[i]);
+				mask_input_input[i] = logic_xor(mask_input_input[i], mask[i]);
 			}
-			io->send_data(mask_input, cf->n1);
-			io->recv_data(mask_input+cf->n1, cf->n2);
+			io->send_data(mask_input_input, cf->n1);
+			io->recv_data(mask_input_input+cf->n1, cf->n2);
 			io->recv_block(labels, cf->n1 + cf->n2);
 
 			//send output mask data (Bob does this for FC-resil version)
 			send_partial_block<SSP>(io, mac+cf->num_wire - cf->n3, cf->n3);
 		}
+	}
+
+	void online () {
+		// separated for benchmarking purposes
+		uint8_t * mask_input = new uint8_t[cf->num_wire];
+		memset(mask_input, 0, cf->num_wire);
+		memcpy(mask_input, mask_input_input, cf->n1+cf->n2);
+		memset(mask_input_input, 0, cf->n1 + cf->n2);
 		int ands = 0;
 		if(party == BOB) {
 			for(int i = 0; i < cf->num_gate; ++i) {
@@ -461,9 +473,15 @@ class C2PC { public:
 			// send output wire labels
 			io->send_data(labels+(cf->num_wire - cf->n3), (cf->n3)*sizeof(block));
 		}
+		delete[] mask_input;
+
+	}
+
+	void process_outputs(bool* output) {
 
 		if (party == ALICE) {
 			bool * o = new bool[cf->n3];
+			uint8_t* mask_input = new uint8_t[cf->n3];
 			// receive and verify s (shares of lambda)
 			for(int i = 0; i < cf->n3; ++i) {
 				block tmp;
@@ -489,9 +507,11 @@ class C2PC { public:
 				block tmp0 = labels[cf->num_wire-cf->n3 + i];
 				block tmp1 = xorBlocks(tmp0, fpre->Delta);
 				if (block_cmp(&tmp0, received_labels+i, 1))
-					mask_input[cf->num_wire - cf->n3 + i] = 0;
+					//mask_input[cf->num_wire - cf->n3 + i] = 0;
+					mask_input[i] = 0;
 				else if (block_cmp(&tmp1, received_labels+i, 1))
-					mask_input[cf->num_wire - cf->n3 + i] = 1;
+					//mask_input[cf->num_wire - cf->n3 + i] = 1;
+					mask_input[i] = 1;
 				else
 					cout<<"received wire label " <<i<< " did not match!"<<endl;
 			}
@@ -499,7 +519,8 @@ class C2PC { public:
 
 			// output by reconstructing from self-garbled table
 			for(int i = 0; i < cf->n3; ++i) {
-				uint8_t zmsk = mask_input[cf->num_wire - cf->n3 + i];
+				//uint8_t zmsk = mask_input[cf->num_wire - cf->n3 + i];
+				uint8_t zmsk = mask_input[i];
 				uint8_t s = o[i];
 				uint8_t out_index = s + 2*zmsk;
 				bool output_from_table = selfGToutput[i][out_index];
@@ -509,8 +530,8 @@ class C2PC { public:
 			}
 
 			delete[] o;
+			delete[] mask_input;
 		}
-		delete[] mask_input;
 	}
 
 	void check(block * MAC, block * KEY, bool * r, int length = 1) {

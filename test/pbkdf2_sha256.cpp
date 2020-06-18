@@ -8,7 +8,12 @@ int main(int argc, char** argv) {
 	parse_party_and_port(argv, &party, &port);
 	NetIO* io = new NetIO(party==ALICE ? nullptr:IP, port);
 	io->set_nodelay();
-	test(party, io, "pbkdf2-sha256/pbkdf2-sha256-1e3.txt", "da5698be17b9b46962335799779fbeca8ce5d491c0d26243bafef9ea1837a9d8");
+	// hack so don't have to constantly `make`
+	string torun;
+	std::ifstream infile("pbkdf_file.txt");
+	getline(infile, torun);
+	infile.close();
+	bench(party, io, torun);
 	delete io;
 	return 0;
 }

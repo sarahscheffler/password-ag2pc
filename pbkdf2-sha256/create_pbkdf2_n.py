@@ -190,4 +190,5 @@ def pbkdf_file(nen):
         
 #add_n_iters(pbkdf_file("1e0"), pbkdf_file("1e2"), 99)
 #add_n_iters(pbkdf_file("1e2"), pbkdf_file("1e3"), 900)
-add_n_iters(pbkdf_file("1e3"), pbkdf_file("5e3"), 4000)
+#add_n_iters(pbkdf_file("1e3"), pbkdf_file("5e3"), 4000)
+add_n_iters(pbkdf_file("1e0"), pbkdf_file("1e1"), 9)
